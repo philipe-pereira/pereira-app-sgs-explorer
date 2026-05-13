@@ -2,66 +2,41 @@ package br.com.pereiraeng.sgsexplorer;
 
 import java.io.StringReader;
 import java.time.LocalDate;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.Calendar;
-import java.util.GregorianCalendar;
-import java.util.NavigableMap;
 
 import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamReader;
 
-import br.com.pereiraeng.core.TimeUtils;
-
-public final class SerieXmlParser {
+public class SerieXmlToTimeSeries {
 
 	private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("d/M/uuuu");
 
-	public static final class Sample {
-		private final double valor;
-		private final boolean bloqueado;
-
-		public Sample(double valor, boolean bloqueado) {
-			this.valor = valor;
-			this.bloqueado = bloqueado;
-		}
-
-		public double getValor() {
-			return valor;
-		}
-
-		public boolean isBloqueado() {
-			return bloqueado;
-		}
-
-		@Override
-		public String toString() {
-			return "Sample{valor=" + valor + ", bloqueado=" + bloqueado + "}";
-		}
-	}
-
-	public static int parseToTimeSeries(NavigableMap<Integer, Sample> series, String xml) throws Exception {
+	/**
+	 * Parseia TODOS os <ITEM> (independente de SERIE ID). Se quiser filtrar por ID
+	 * depois, eu ajusto.
+	 */
+	public static TimeSeriesTable parse(String xml) throws Exception {
 		if (xml == null)
 			throw new IllegalArgumentException("xml == null");
 
+		TimeSeriesTable ts = new TimeSeriesTable(256);
+
 		XMLInputFactory factory = XMLInputFactory.newFactory();
-		// Segurança/robustez básica
 		factory.setProperty(XMLInputFactory.IS_NAMESPACE_AWARE, Boolean.FALSE);
 		factory.setProperty(XMLInputFactory.SUPPORT_DTD, Boolean.FALSE);
 
 		XMLStreamReader r = null;
+
+		String currentElement = null;
+		boolean insideItem = false;
+
+		LocalDate data = null;
+		Double valor = null;
+		Boolean bloqueado = null;
+
 		try {
 			r = factory.createXMLStreamReader(new StringReader(xml));
-
-			String currentElement = null;
-
-			boolean insideItem = false;
-
-			LocalDate data = null;
-			Double valor = null;
-			Boolean bloqueado = null;
 
 			while (r.hasNext()) {
 				int event = r.next();
@@ -74,8 +49,6 @@ public final class SerieXmlParser {
 						data = null;
 						valor = null;
 						bloqueado = null;
-					} else if ("SERIE".equals(currentElement)) {
-						// TODO
 					}
 					break;
 
@@ -113,9 +86,8 @@ public final class SerieXmlParser {
 									"ITEM incompleto: DATA=" + data + ", VALOR=" + valor + ", BLOQUEADO=" + bloqueado);
 						}
 
-//						int t = (int) data.toEpochDay(); // inteiro tempo (dias)
-						int t = TimeUtils.toInt(convertLocalDateToCalendar(data));
-						series.put(Integer.valueOf(t), new Sample(valor.doubleValue(), bloqueado.booleanValue()));
+						int t = (int) data.toEpochDay();
+						ts.put(t, valor.doubleValue(), bloqueado.booleanValue());
 					}
 
 					currentElement = null;
@@ -134,18 +106,26 @@ public final class SerieXmlParser {
 			}
 		}
 
-		return 11;
+		ts.compact();
+		return ts;
 	}
 
-	public static Calendar convertLocalDateToCalendar(LocalDate localDate) {
-		// 1. Add a time component to the LocalDate (start of the day is often desired)
-		// Using atStartOfDay() is recommended as it handles potential Daylight Saving
-		// Time anomalies
-		ZonedDateTime zonedDateTime = localDate.atStartOfDay(ZoneId.systemDefault());
+	// demo
+	public static void main(String[] args) throws Exception {
+		String xml = "<?xml version='1.0' encoding='ISO-8859-1'?>\n" + "<SERIES>\n" + "  <SERIE ID='11'>\n"
+				+ "    <ITEM><DATA>20/1/2026</DATA><VALOR>0.055131</VALOR><BLOQUEADO>false</BLOQUEADO></ITEM>\n"
+				+ "    <ITEM><DATA>23/1/2026</DATA><VALOR>0.123</VALOR><BLOQUEADO>true</BLOQUEADO></ITEM>\n"
+				+ "  </SERIE>\n" + "</SERIES>";
 
-		// 2. Convert the ZonedDateTime to a GregorianCalendar using the 'from' method
-		GregorianCalendar calendar = GregorianCalendar.from(zonedDateTime);
+		TimeSeriesTable ts = parse(xml);
+		System.out.println("size=" + ts.size());
 
-		return calendar;
+		TimeSeriesTable.IntRange r = ts.rangeInclusive((int) LocalDate.of(2026, 1, 20).toEpochDay(),
+				(int) LocalDate.of(2026, 1, 30).toEpochDay());
+		System.out.println("range=" + r);
+
+		for (int i = r.from; i < r.toExclusive; i++) {
+			System.out.println(ts.timeAt(i) + " -> " + ts.valorAt(i) + " bloqueado=" + ts.bloqueadoAt(i));
+		}
 	}
 }
